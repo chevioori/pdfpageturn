@@ -1,0 +1,37 @@
+.pdf-page-turn-host {
+	position: relative;
+}
+
+.pdf-page-turn-overlay {
+	position: absolute;
+	inset: 0;
+	z-index: 20;
+	/* Everything not covered by a zone (the middle third, plus the two edge
+	   margins) passes straight through to the PDF view underneath. */
+	pointer-events: none;
+}
+
+.pdf-page-turn-zone {
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	width: calc(33.333% - var(--pdf-page-turn-edge-margin, 24px));
+	pointer-events: auto;
+	background: transparent;
+	/* Allow default vertical panning inside the zone; horizontal panning is left
+	   to the browser/app rather than claimed by us, so an edge-swipe that enters
+	   the zone is never intercepted mid-gesture. */
+	touch-action: pan-y;
+	-webkit-touch-callout: none;
+	-webkit-user-select: none;
+	user-select: none;
+	-webkit-tap-highlight-color: transparent;
+}
+
+.pdf-page-turn-zone-left {
+	left: var(--pdf-page-turn-edge-margin, 24px);
+}
+
+.pdf-page-turn-zone-right {
+	right: var(--pdf-page-turn-edge-margin, 24px);
+}
