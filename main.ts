@@ -101,11 +101,11 @@ export default class PDFPageTurnPlugin extends Plugin {
 		if (!host) return;
 
 		const observer = new MutationObserver(() => {
-			if (!host.querySelector("div.page[data-page-number]")) return;
+			const created = this.createOverlay(leaf);
+			if (!created) return;
 			observer.disconnect();
 			this.pendingObservers.delete(leaf);
-			const created = this.createOverlay(leaf);
-			if (created) this.overlays.set(leaf, created);
+			this.overlays.set(leaf, created);
 		});
 		observer.observe(host, { childList: true, subtree: true });
 		this.pendingObservers.set(leaf, observer);
@@ -244,12 +244,18 @@ export default class PDFPageTurnPlugin extends Plugin {
 		const pages = host.querySelectorAll<HTMLElement>("div.page[data-page-number]");
 		if (pages.length === 0) return null;
 
+		// Walk up but never past `host`: escaping into ancestors outside the PDF view
+		// could land on an unrelated scrollable element (e.g. the workspace shell).
 		let el: HTMLElement | null = pages[0].parentElement;
-		while (el) {
+		while (el && el !== host) {
 			if (el.scrollHeight > el.clientHeight + 1) return { container: el, pages };
 			el = el.parentElement;
 		}
-		return null;
+
+		// No narrower scrollable ancestor exists inside the view (e.g. a short PDF that
+		// fits without scrolling, or layout hasn't settled yet) — fall back to the view's
+		// own content element so the overlay still attaches instead of silently failing.
+		return { container: host, pages };
 	}
 
 	/** Height of one page "slot" (page plus its inter-page margin), computed as the
