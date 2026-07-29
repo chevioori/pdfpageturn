@@ -191,7 +191,7 @@ export default class PDFPageTurnPlugin extends Plugin {
 			Math.max(container.scrollTop + direction * pageHeight, 0),
 			maxScroll
 		);
-		container.scrollTo({ top: target, behavior: "smooth" });
+		container.scrollTo({ top: target, behavior: "instant" });
 	}
 
 	/** pdf.js (the PDF renderer Obsidian embeds) always wraps rendered pages in
