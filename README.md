@@ -25,4 +25,4 @@ npm run dev    # watch build
 npm run build  # type-check + production build
 ```
 
-This produces `main.js`, which along with `manifest.json` and `styles.css` is what Obsidian loads from the plugin's folder (e.g. `<vault>/.obsidian/plugins/pdf-page-turn/`).
+This produces `main.js`, which along with `manifest.json` and `styles.css` is what Obsidian loads from the plugin's folder (e.g. `<vault>/.obsidian/plugins/pdfpageturn/`).

@@ -1,5 +1,5 @@
 {
-	"id": "pdf-page-turn",
+	"id": "pdfpageturn",
 	"name": "PDF Page Turn",
 	"version": "1.0.0",
 	"minAppVersion": "1.4.0",
