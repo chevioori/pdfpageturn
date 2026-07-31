@@ -2,10 +2,12 @@ import { App, Plugin, PluginSettingTab, Setting, WorkspaceLeaf } from "obsidian"
 
 interface PDFPageTurnSettings {
 	enabled: boolean;
+	debugHighlight: boolean;
 }
 
 const DEFAULT_SETTINGS: PDFPageTurnSettings = {
 	enabled: true,
+	debugHighlight: false,
 };
 
 /** Kept clear of touch zones so an edge-swipe (Obsidian Mobile's swipe-to-go-back) can
@@ -86,6 +88,14 @@ export default class PDFPageTurnPlugin extends Plugin {
 		}
 	}
 
+	/** Toggles the visible highlight on every currently attached overlay without tearing
+	 * them down, so the debug setting takes effect immediately. */
+	setDebugHighlight(enabled: boolean): void {
+		for (const overlay of this.overlays.values()) {
+			overlay.toggleClass("pdf-page-turn-debug", enabled);
+		}
+	}
+
 	/** Attaches an overlay immediately if the PDF has finished rendering pages; otherwise
 	 * (the leaf just opened and pdf.js hasn't rendered yet) watches for pages to appear
 	 * and attaches as soon as they do. */
@@ -130,6 +140,7 @@ export default class PDFPageTurnPlugin extends Plugin {
 		container.style.setProperty("--pdf-page-turn-edge-margin", `${EDGE_SAFE_MARGIN_PX}px`);
 
 		const overlay = container.createDiv({ cls: "pdf-page-turn-overlay" });
+		overlay.toggleClass("pdf-page-turn-debug", this.settings.debugHighlight);
 		const leftZone = overlay.createDiv({
 			cls: "pdf-page-turn-zone pdf-page-turn-zone-left",
 		});
@@ -299,6 +310,19 @@ class PDFPageTurnSettingTab extends PluginSettingTab {
 					this.plugin.settings.enabled = value;
 					await this.plugin.saveSettings();
 					this.plugin.refreshAllOverlays();
+				})
+			);
+
+		new Setting(containerEl)
+			.setName("Highlight touch zones (debug)")
+			.setDesc(
+				"Shows the left/right touch zones with a visible tinted background instead of leaving them invisible. Useful for checking that the overlay is actually being placed over the PDF."
+			)
+			.addToggle((toggle) =>
+				toggle.setValue(this.plugin.settings.debugHighlight).onChange(async (value) => {
+					this.plugin.settings.debugHighlight = value;
+					await this.plugin.saveSettings();
+					this.plugin.setDebugHighlight(value);
 				})
 			);
 	}
