@@ -35,3 +35,15 @@
 .pdf-page-turn-zone-right {
 	right: var(--pdf-page-turn-edge-margin, 24px);
 }
+
+.pdf-page-turn-debug .pdf-page-turn-zone-left {
+	background: rgba(80, 160, 255, 0.25);
+	outline: 2px dashed rgba(80, 160, 255, 0.8);
+	outline-offset: -2px;
+}
+
+.pdf-page-turn-debug .pdf-page-turn-zone-right {
+	background: rgba(255, 120, 80, 0.25);
+	outline: 2px dashed rgba(255, 120, 80, 0.8);
+	outline-offset: -2px;
+}

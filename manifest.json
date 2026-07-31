@@ -1,7 +1,7 @@
 {
 	"id": "pdfpageturn",
 	"name": "PDF Page Turn",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"minAppVersion": "1.4.0",
 	"description": "Invisible touch zones on PDF views for tap-to-turn-page navigation on Obsidian Mobile / iPad. Tap the right third of the screen to go forward a page, the left third to go back, and leave the middle third untouched.",
 	"author": "chevioori",
