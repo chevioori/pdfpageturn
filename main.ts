@@ -1,4 +1,4 @@
-import { App, Plugin, PluginSettingTab, Setting, WorkspaceLeaf } from "obsidian";
+import { App, Notice, Plugin, PluginSettingTab, Setting, WorkspaceLeaf } from "obsidian";
 
 interface PDFPageTurnSettings {
 	enabled: boolean;
@@ -20,12 +20,19 @@ const EDGE_SAFE_MARGIN_PX = 24;
 const TAP_MAX_MOVEMENT_PX = 10;
 const TAP_MAX_DURATION_MS = 400;
 
+/** How long to watch a newly-opened PDF leaf for rendered pages before giving up and
+ * reporting a diagnostic (debug mode only) instead of watching silently forever. */
+const WATCH_TIMEOUT_MS = 8000;
+
 type PageDirection = 1 | -1;
 
 export default class PDFPageTurnPlugin extends Plugin {
 	settings: PDFPageTurnSettings;
 	private overlays = new Map<WorkspaceLeaf, HTMLElement>();
-	private pendingObservers = new Map<WorkspaceLeaf, MutationObserver>();
+	private pendingObservers = new Map<
+		WorkspaceLeaf,
+		{ observer: MutationObserver; timeoutId: number }
+	>();
 
 	async onload() {
 		await this.loadSettings();
@@ -46,7 +53,10 @@ export default class PDFPageTurnPlugin extends Plugin {
 	onunload() {
 		for (const overlay of this.overlays.values()) overlay.remove();
 		this.overlays.clear();
-		for (const observer of this.pendingObservers.values()) observer.disconnect();
+		for (const { observer, timeoutId } of this.pendingObservers.values()) {
+			observer.disconnect();
+			window.clearTimeout(timeoutId);
+		}
 		this.pendingObservers.clear();
 	}
 
@@ -73,9 +83,10 @@ export default class PDFPageTurnPlugin extends Plugin {
 			}
 		}
 
-		for (const [leaf, observer] of this.pendingObservers) {
+		for (const [leaf, { observer, timeoutId }] of this.pendingObservers) {
 			if (!pdfLeaves.has(leaf) || !this.settings.enabled) {
 				observer.disconnect();
+				window.clearTimeout(timeoutId);
 				this.pendingObservers.delete(leaf);
 			}
 		}
@@ -96,29 +107,54 @@ export default class PDFPageTurnPlugin extends Plugin {
 		}
 	}
 
+	private debugLog(message: string): void {
+		if (this.settings.debugHighlight) new Notice(`PDF Page Turn: ${message}`, 6000);
+	}
+
 	/** Attaches an overlay immediately if the PDF has finished rendering pages; otherwise
 	 * (the leaf just opened and pdf.js hasn't rendered yet) watches for pages to appear
-	 * and attaches as soon as they do. */
+	 * and attaches as soon as they do. Gives up and reports (debug mode only) after
+	 * WATCH_TIMEOUT_MS rather than watching silently forever. */
 	private tryAttachOverlay(leaf: WorkspaceLeaf): void {
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		const host: HTMLElement | undefined = (leaf.view as any)?.contentEl;
+		const initialPages = host?.querySelectorAll("div.page[data-page-number]").length ?? 0;
+		this.debugLog(`PDF leaf detected, ${initialPages} page element(s) found so far`);
+
 		const overlay = this.createOverlay(leaf);
 		if (overlay) {
 			this.overlays.set(leaf, overlay);
+			this.debugLog("overlay attached");
 			return;
 		}
 
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		const host: HTMLElement | undefined = (leaf.view as any)?.contentEl;
-		if (!host) return;
+		if (!host) {
+			this.debugLog("no contentEl on this leaf's view, cannot watch for pages");
+			return;
+		}
+
+		const timeoutId = window.setTimeout(() => {
+			observer.disconnect();
+			this.pendingObservers.delete(leaf);
+			const pageCount = host.querySelectorAll("div.page[data-page-number]").length;
+			this.debugLog(
+				`gave up after ${WATCH_TIMEOUT_MS}ms waiting for PDF pages ` +
+					`(found ${pageCount} "div.page[data-page-number]" element(s) total) — ` +
+					"this Obsidian version/platform may render PDFs differently than expected"
+			);
+		}, WATCH_TIMEOUT_MS);
 
 		const observer = new MutationObserver(() => {
 			const created = this.createOverlay(leaf);
 			if (!created) return;
+			window.clearTimeout(timeoutId);
 			observer.disconnect();
 			this.pendingObservers.delete(leaf);
 			this.overlays.set(leaf, created);
+			this.debugLog("overlay attached (after waiting for pages to render)");
 		});
 		observer.observe(host, { childList: true, subtree: true });
-		this.pendingObservers.set(leaf, observer);
+		this.pendingObservers.set(leaf, { observer, timeoutId });
 	}
 
 	/** Attaches the overlay to the PDF's actual scrollable content container (not the
