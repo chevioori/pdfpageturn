@@ -20,19 +20,11 @@ const EDGE_SAFE_MARGIN_PX = 24;
 const TAP_MAX_MOVEMENT_PX = 10;
 const TAP_MAX_DURATION_MS = 400;
 
-/** How long to watch a newly-opened PDF leaf for rendered pages before giving up and
- * reporting a diagnostic (debug mode only) instead of watching silently forever. */
-const WATCH_TIMEOUT_MS = 8000;
-
 type PageDirection = 1 | -1;
 
 export default class PDFPageTurnPlugin extends Plugin {
 	settings: PDFPageTurnSettings;
 	private overlays = new Map<WorkspaceLeaf, HTMLElement>();
-	private pendingObservers = new Map<
-		WorkspaceLeaf,
-		{ observer: MutationObserver; timeoutId: number }
-	>();
 
 	async onload() {
 		await this.loadSettings();
@@ -53,11 +45,6 @@ export default class PDFPageTurnPlugin extends Plugin {
 	onunload() {
 		for (const overlay of this.overlays.values()) overlay.remove();
 		this.overlays.clear();
-		for (const { observer, timeoutId } of this.pendingObservers.values()) {
-			observer.disconnect();
-			window.clearTimeout(timeoutId);
-		}
-		this.pendingObservers.clear();
 	}
 
 	async loadSettings() {
@@ -83,19 +70,15 @@ export default class PDFPageTurnPlugin extends Plugin {
 			}
 		}
 
-		for (const [leaf, { observer, timeoutId }] of this.pendingObservers) {
-			if (!pdfLeaves.has(leaf) || !this.settings.enabled) {
-				observer.disconnect();
-				window.clearTimeout(timeoutId);
-				this.pendingObservers.delete(leaf);
-			}
-		}
-
 		if (!this.settings.enabled) return;
 
 		for (const leaf of pdfLeaves) {
-			if (this.overlays.has(leaf) || this.pendingObservers.has(leaf)) continue;
-			this.tryAttachOverlay(leaf);
+			if (this.overlays.has(leaf)) continue;
+			const overlay = this.createOverlay(leaf);
+			if (overlay) {
+				this.overlays.set(leaf, overlay);
+				this.debugLog("overlay attached to view");
+			}
 		}
 	}
 
@@ -111,71 +94,23 @@ export default class PDFPageTurnPlugin extends Plugin {
 		if (this.settings.debugHighlight) new Notice(`PDF Page Turn: ${message}`, 6000);
 	}
 
-	/** Attaches an overlay immediately if the PDF has finished rendering pages; otherwise
-	 * (the leaf just opened and pdf.js hasn't rendered yet) watches for pages to appear
-	 * and attaches as soon as they do. Gives up and reports (debug mode only) after
-	 * WATCH_TIMEOUT_MS rather than watching silently forever. */
-	private tryAttachOverlay(leaf: WorkspaceLeaf): void {
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		const host: HTMLElement | undefined = (leaf.view as any)?.contentEl;
-		const initialPages = host?.querySelectorAll("div.page[data-page-number]").length ?? 0;
-		this.debugLog(`PDF leaf detected, ${initialPages} page element(s) found so far`);
-
-		const overlay = this.createOverlay(leaf);
-		if (overlay) {
-			this.overlays.set(leaf, overlay);
-			this.debugLog("overlay attached");
-			return;
-		}
-
-		if (!host) {
-			this.debugLog("no contentEl on this leaf's view, cannot watch for pages");
-			return;
-		}
-
-		const timeoutId = window.setTimeout(() => {
-			observer.disconnect();
-			this.pendingObservers.delete(leaf);
-			const pageCount = host.querySelectorAll("div.page[data-page-number]").length;
-			this.debugLog(
-				`gave up after ${WATCH_TIMEOUT_MS}ms waiting for PDF pages ` +
-					`(found ${pageCount} "div.page[data-page-number]" element(s) total) — ` +
-					"this Obsidian version/platform may render PDFs differently than expected"
-			);
-		}, WATCH_TIMEOUT_MS);
-
-		const observer = new MutationObserver(() => {
-			const created = this.createOverlay(leaf);
-			if (!created) return;
-			window.clearTimeout(timeoutId);
-			observer.disconnect();
-			this.pendingObservers.delete(leaf);
-			this.overlays.set(leaf, created);
-			this.debugLog("overlay attached (after waiting for pages to render)");
-		});
-		observer.observe(host, { childList: true, subtree: true });
-		this.pendingObservers.set(leaf, { observer, timeoutId });
-	}
-
-	/** Attaches the overlay to the PDF's actual scrollable content container (not the
-	 * whole view), so it never covers Obsidian's toolbar or other chrome that lives
-	 * outside that container. Returns null if the PDF hasn't rendered any pages yet. */
+	/** Attaches the overlay directly and unconditionally to the view's own content
+	 * element as soon as the leaf is detected as a PDF view — it does not wait on or
+	 * depend on the PDF having rendered any pages yet. This covers the whole view
+	 * (including the toolbar) but is the reliable, proven-working approach; page
+	 * detection for scrolling happens separately, lazily, at tap time in turnPage(). */
 	private createOverlay(leaf: WorkspaceLeaf): HTMLElement | null {
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
 		const view = leaf.view as any;
 		const host: HTMLElement | undefined = view?.contentEl;
 		if (!host) return null;
 
-		const located = this.locatePdfViewer(host);
-		if (!located) return null;
-		const { container } = located;
-
-		if (getComputedStyle(container).position === "static") {
-			container.addClass("pdf-page-turn-host");
+		if (getComputedStyle(host).position === "static") {
+			host.addClass("pdf-page-turn-host");
 		}
-		container.style.setProperty("--pdf-page-turn-edge-margin", `${EDGE_SAFE_MARGIN_PX}px`);
+		host.style.setProperty("--pdf-page-turn-edge-margin", `${EDGE_SAFE_MARGIN_PX}px`);
 
-		const overlay = container.createDiv({ cls: "pdf-page-turn-overlay" });
+		const overlay = host.createDiv({ cls: "pdf-page-turn-overlay" });
 		overlay.toggleClass("pdf-page-turn-debug", this.settings.debugHighlight);
 		const leftZone = overlay.createDiv({
 			cls: "pdf-page-turn-zone pdf-page-turn-zone-left",
@@ -262,14 +197,25 @@ export default class PDFPageTurnPlugin extends Plugin {
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
 	private turnPage(view: any, direction: PageDirection): void {
 		const host: HTMLElement | undefined = view?.contentEl;
-		if (!host) return;
+		if (!host) {
+			this.debugLog("tap registered, but view has no contentEl");
+			return;
+		}
 
 		const located = this.locatePdfViewer(host);
-		if (!located) return;
+		if (!located) {
+			this.debugLog(
+				'tap registered, but found no "div.page[data-page-number]" elements to scroll'
+			);
+			return;
+		}
 		const { container, pages } = located;
 
 		const pageHeight = this.getCurrentPageHeight(pages, container);
-		if (!pageHeight) return;
+		if (!pageHeight) {
+			this.debugLog("tap registered, pages found, but could not compute a page height");
+			return;
+		}
 
 		const maxScroll = container.scrollHeight - container.clientHeight;
 		const target = Math.min(
@@ -282,9 +228,8 @@ export default class PDFPageTurnPlugin extends Plugin {
 	/** pdf.js (the PDF renderer Obsidian embeds) always wraps rendered pages in
 	 * `div.page[data-page-number]` elements; walking up from one to the nearest
 	 * actually-scrollable ancestor finds the viewer's scroll container without
-	 * depending on Obsidian's own, version-specific wrapper class names. This is also
-	 * exactly the element the overlay attaches to, so it never covers surrounding
-	 * chrome like the PDF toolbar. */
+	 * depending on Obsidian's own, version-specific wrapper class names. Used only for
+	 * scrolling at tap time — the overlay itself attaches to the whole view. */
 	private locatePdfViewer(
 		host: HTMLElement
 	): { container: HTMLElement; pages: NodeListOf<HTMLElement> } | null {
